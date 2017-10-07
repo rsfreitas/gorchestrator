@@ -6,15 +6,18 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
+	//	"io"
 	"io/ioutil"
 	"os"
+	"time"
 
 	"github.com/processone/gox/xmpp"
+	"github.com/spacemonkeygo/spacelog"
 	"menteslibres.net/gosexy/yaml"
 )
 
 const AppName string = "orchestrator"
-const Version string = "0.1"
+const Version string = "0.1.1"
 
 //The command line options.
 type CLIOptions struct {
@@ -33,6 +36,8 @@ type ConfigServer struct {
 
 type BotConfig struct {
 	ConfigServer
+	logFilename string
+	level       string
 }
 
 //buildCLIOptions configures the application supported command line options.
@@ -66,7 +71,19 @@ func loadBotConfiguration(filename string) (BotConfig, error) {
 	b.username = cfg.Get("server", "username").(string)
 	b.password = cfg.Get("server", "password").(string)
 
+	// Log configuration
+	b.logFilename = cfg.Get("log", "path").(string)
+	b.level = cfg.Get("log", "level").(string)
+
 	return b, nil
+}
+
+//startLogging creates the application log file.
+func startLogging(botConfig BotConfig) {
+	spacelog.Setup(AppName, spacelog.SetupConfig{
+		Output: botConfig.logFilename,
+		Level:  botConfig.level,
+	})
 }
 
 //loadCertificate loads the server public certificate so we can login.
@@ -91,8 +108,73 @@ func loadCertificate(filename string) error {
 	return nil
 }
 
+//establishChatConnection establishes the XMPP connection with the server.
+func establishChatConnection(certFilename string, botConfig BotConfig) (*xmpp.Client, error) {
+	if err := loadCertificate(certFilename); err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+
+	/*	writer := func() io.Writer {
+		if botConfig.level == "debug" {
+			logger := spacelog.GetLogger()
+			return logger.Writer(spacelog.Debug)
+		}
+
+		return nil
+	}()*/
+
+	xmppOptions := xmpp.Options{
+		Address:  fmt.Sprintf("%s:%d", botConfig.hostname, botConfig.port),
+		Jid:      botConfig.username,
+		Password: botConfig.password,
+		//PacketLogger: os.Stdout,
+		PacketLogger: nil,
+		Retry:        3,
+	}
+
+	client, err := xmpp.NewClient(xmppOptions)
+
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+
+	_, err = client.Connect()
+
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+
+	return client, nil
+}
+
+//receiveMessages is the function to receive all incoming messages to us.
+//It also notify through the chanSession channel when a new message just arrived.
+func receiveMessages(client *xmpp.Client, chanSession chan ChatSession) {
+	for packet := range client.Recv() {
+		switch packet := packet.(type) {
+		case *xmpp.ClientMessage:
+			// TODO: Handle message
+			chanSession <- ChatSession{
+				lastActivity: time.Now(),
+				Name:         packet.From,
+				ChatMessage: ChatMessage{
+					Type: Message,
+					From: packet.From,
+					To:   packet.To,
+				},
+			}
+
+			fmt.Fprintf(os.Stdout, "Body = %s - from = %s\n", packet.Body, packet.From)
+		}
+	}
+}
+
 func main() {
 	var options CLIOptions
+	sessions := make(map[string]ChatSession)
 
 	buildCLIOptions(&options)
 	flag.Parse()
@@ -114,42 +196,25 @@ func main() {
 		os.Exit(-1)
 	}
 
-	if err := loadCertificate(*options.certFilename); err != nil {
-		fmt.Println(err)
-		os.Exit(-1)
-	}
-
-	xmppOptions := xmpp.Options{
-		Address:      fmt.Sprintf("%s:%d", botConfig.hostname, botConfig.port),
-		Jid:          botConfig.username,
-		Password:     botConfig.password,
-		PacketLogger: os.Stdout,
-		Retry:        3,
-	}
-
-	client, err := xmpp.NewClient(xmppOptions)
+	startLogging(botConfig)
+	client, err := establishChatConnection(*options.certFilename, botConfig)
 
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(-1)
 	}
 
-	_, err = client.Connect()
+	chanSession := make(chan ChatSession)
+	go receiveMessages(client, chanSession)
 
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(-1)
-	}
+	for {
+		select {
+		case session := <-chanSession:
+			sessions[session.Name] = session
 
-	// Iterator to receive packets coming from our XMPP connection
-	for packet := range client.Recv() {
-		switch packet := packet.(type) {
-		case *xmpp.ClientMessage:
-			fmt.Fprintf(os.Stdout, "Body = %s - from = %s\n", packet.Body, packet.From)
-			//			reply := xmpp.ClientMessage{Packet: xmpp.Packet{To: packet.From}, Body: packet.Body}
-			//			client.Send(reply.XMPPFormat())
-		default:
-			fmt.Fprintf(os.Stdout, "Ignoring packet: %T\n", packet)
+		case <-time.After(5 * time.Second):
+			DeleteInactives(sessions, 1)
+			fmt.Println(len(sessions))
 		}
 	}
 }
