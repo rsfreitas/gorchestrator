@@ -34,8 +34,13 @@ type ConfigServer struct {
 	password string
 }
 
+type BotInfo struct {
+	name string
+}
+
 type BotConfig struct {
 	ConfigServer
+	BotInfo
 	logFilename string
 	level       string
 }
@@ -74,6 +79,9 @@ func loadBotConfiguration(filename string) (BotConfig, error) {
 	// Log configuration
 	b.logFilename = cfg.Get("log", "path").(string)
 	b.level = cfg.Get("log", "level").(string)
+
+	// Bot configuration
+	b.name = cfg.Get("bot", "name").(string)
 
 	return b, nil
 }
@@ -151,12 +159,16 @@ func establishChatConnection(certFilename string, botConfig BotConfig) (*xmpp.Cl
 }
 
 //receiveMessages is the function to receive all incoming messages to us.
-//It also notify through the chanSession channel when a new message just arrived.
-func receiveMessages(client *xmpp.Client, chanSession chan ChatSession) {
+//It also notifies through the chanSession channel when a new chat message just arrived.
+func receiveMessages(client *xmpp.Client, chanSession chan ChatSession, bot BotModel) {
 	for packet := range client.Recv() {
 		switch packet := packet.(type) {
 		case *xmpp.ClientMessage:
-			// TODO: Handle message
+			if packet.Type != "chat" {
+				/* Ignores unsupported messages */
+				break
+			}
+
 			chanSession <- ChatSession{
 				lastActivity: time.Now(),
 				Name:         packet.From,
@@ -168,6 +180,11 @@ func receiveMessages(client *xmpp.Client, chanSession chan ChatSession) {
 			}
 
 			fmt.Fprintf(os.Stdout, "Body = %s - from = %s\n", packet.Body, packet.From)
+			answer := bot.HandleMessage(*packet)
+
+			// TODO: Do we have an answer to send? Send it...
+			reply := xmpp.ClientMessage{Packet: xmpp.Packet{To: packet.From}, Body: answer}
+			client.Send(reply.XMPPFormat())
 		}
 	}
 }
@@ -196,7 +213,16 @@ func main() {
 		os.Exit(-1)
 	}
 
+	// create the Bot
 	startLogging(botConfig)
+	bot, err := CreateBot(botConfig.name)
+
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(-1)
+	}
+
+	// make the XMPP connection
 	client, err := establishChatConnection(*options.certFilename, botConfig)
 
 	if err != nil {
@@ -205,11 +231,12 @@ func main() {
 	}
 
 	chanSession := make(chan ChatSession)
-	go receiveMessages(client, chanSession)
+	go receiveMessages(client, chanSession, bot)
 
 	for {
 		select {
 		case session := <-chanSession:
+			fmt.Println("Adding session for user:", session.Name)
 			sessions[session.Name] = session
 
 		case <-time.After(5 * time.Second):
