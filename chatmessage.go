@@ -12,10 +12,13 @@ const (
 	ControlMessage
 )
 
+//A single message object.
 type ChatMessage struct {
 	Type MessageType
 	From string
 	To   string
+
+	Attachment string
 }
 
 func (p ChatMessage) String() string {
