@@ -158,9 +158,22 @@ func establishChatConnection(certFilename string, botConfig BotConfig) (*xmpp.Cl
 	return client, nil
 }
 
+//handleMessage does the job of calling the bot message handling function and give
+//back an answer.
+func handleMessage(client *xmpp.Client, bot BotModel, packet *xmpp.ClientMessage, session ChatSession) {
+	// First, we let the bot do its job
+	answers := bot.HandleMessage(*packet, session)
+
+	// And now we can send the answer
+	for _, answer := range answers {
+		reply := xmpp.ClientMessage{Packet: xmpp.Packet{To: packet.From}, Body: answer.Message}
+		client.Send(reply.XMPPFormat())
+	}
+}
+
 //receiveMessages is the function to receive all incoming messages to us.
 //It also notifies through the chanSession channel when a new chat message just arrived.
-func receiveMessages(client *xmpp.Client, chanSession chan ChatSession, bot BotModel) {
+func receiveMessages(client *xmpp.Client, chanSession chan ChatSession, bot BotModel, sessions map[string]ChatSession) {
 	for packet := range client.Recv() {
 		switch packet := packet.(type) {
 		case *xmpp.ClientMessage:
@@ -180,11 +193,7 @@ func receiveMessages(client *xmpp.Client, chanSession chan ChatSession, bot BotM
 			}
 
 			fmt.Fprintf(os.Stdout, "Body = %s - from = %s\n", packet.Body, packet.From)
-			answer := bot.HandleMessage(*packet)
-
-			// TODO: Do we have an answer to send? Send it...
-			reply := xmpp.ClientMessage{Packet: xmpp.Packet{To: packet.From}, Body: answer}
-			client.Send(reply.XMPPFormat())
+			go handleMessage(client, bot, packet, sessions[packet.From])
 		}
 	}
 }
@@ -231,7 +240,7 @@ func main() {
 	}
 
 	chanSession := make(chan ChatSession)
-	go receiveMessages(client, chanSession, bot)
+	go receiveMessages(client, chanSession, bot, sessions)
 
 	for {
 		select {

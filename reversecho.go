@@ -19,13 +19,25 @@ func reverse(s string) string {
 	return string(runes)
 }
 
-func (b *EchoBot) HandleMessage(message xmpp.ClientMessage) string {
-	return reverse(message.Body)
+//
+// The BotModel API implementation
+//
+
+func (b *EchoBot) HandleMessage(message xmpp.ClientMessage, session ChatSession) []ChatMessage {
+	var answers []ChatMessage
+
+	//prepare our answer
+	answers = append(answers, ChatMessage{Message: reverse(message.Body)})
+	return answers
 }
 
 func (b *EchoBot) Name() string {
 	return b.name
 }
+
+//
+// The required method to register ourselves inside the supported bots
+//
 
 func NewEchoBot() (BotModel, error) {
 	return &EchoBot{

@@ -13,6 +13,9 @@ server:
 log:
     path: string
     level: string
+
+bot:
+    name: string
 ```
 
 # License

@@ -14,14 +14,14 @@ const (
 
 //A single message object.
 type ChatMessage struct {
-	Type MessageType
-	From string
-	To   string
-
-	Attachment string
+	Type       MessageType
+	From       string
+	To         string
+	Message    string
+	Attachment bool
 }
 
 func (p ChatMessage) String() string {
-	return fmt.Sprintf("{Type: %d, From: %s, To: %s}",
-		p.Type, p.From, p.To)
+	return fmt.Sprintf("{Type: %d, From: %s, To: %s, Message: %s}",
+		p.Type, p.From, p.To, p.Message)
 }

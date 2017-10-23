@@ -28,6 +28,8 @@ func registerKnownBots() {
 	register("echo-bot", NewEchoBot)
 }
 
+//CreateBot is responsible to initialize our internal registered bots so a
+//user may be able to choose one of them.
 func CreateBot(name string) (BotModel, error) {
 	registerKnownBots()
 	bot, ok := botFactories[name]
